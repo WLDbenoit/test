@@ -1349,6 +1349,7 @@ struct mg_fs mg_fs_posix = {p_stat,  p_list, p_open,   p_close,  p_read,
 
 
 
+
 // Chunk deletion marker is the MSB in the "processed" counter
 #define MG_DMARK ((size_t) 1 << (sizeof(size_t) * 8 - 1))
 
@@ -2237,7 +2238,7 @@ static void deliver_chunked_chunks(struct mg_connection *c, size_t hlen,
     ofs += pl + dl + 2, del += pl + 2;  // 2 is for \r\n suffix
     processed += dl;
     if (c->recv.len != saved) processed -= dl, buf -= dl;
-    mg_hexdump(c->recv.buf, hlen + processed);
+    // mg_hexdump(c->recv.buf, hlen + processed);
     last = (dl == 0);
   }
   mg_iobuf_del(&c->recv, hlen + processed, del);
@@ -2308,6 +2309,34 @@ static void http_cb(struct mg_connection *c, int ev, void *evd, void *fnd) {
     }
   }
   (void) evd, (void) fnd;
+}
+
+static void mg_hfn(struct mg_connection *c, int ev, void *ev_data, void *fnd) {
+  if (ev == MG_EV_HTTP_MSG) {
+    struct mg_http_message *hm = (struct mg_http_message *) ev_data;
+    if (mg_http_match_uri(hm, "/quit")) {
+      mg_http_reply(c, 200, "", "ok\n");
+      c->is_draining = 1;
+      c->label[0] = 'X';
+    } else if (mg_http_match_uri(hm, "/debug")) {
+      int level = (int) mg_json_get_long(hm->body, "$.level", MG_LL_DEBUG);
+      mg_log_set(level);
+      mg_http_reply(c, 200, "", "Debug level set to %d\n", level);
+    } else {
+      mg_http_reply(c, 200, "", "hi\n");
+    }
+  } else if (ev == MG_EV_CLOSE) {
+    if (c->label[0] == 'X') *(bool *) fnd = true;
+  }
+}
+
+void mg_hello(const char *url) {
+  struct mg_mgr mgr;
+  bool done = false;
+  mg_mgr_init(&mgr);
+  if (mg_http_listen(&mgr, url, mg_hfn, &done) == NULL) done = true;
+  while (done == false) mg_mgr_poll(&mgr, 100);
+  mg_mgr_free(&mgr);
 }
 
 struct mg_connection *mg_http_connect(struct mg_mgr *mgr, const char *url,
@@ -3432,6 +3461,7 @@ struct mg_connection *mg_connect(struct mg_mgr *mgr, const char *url,
   } else {
     LIST_ADD_HEAD(struct mg_connection, &mgr->conns, c);
     c->is_udp = (strncmp(url, "udp:", 4) == 0);
+    c->fd = (void *) (size_t) -1;  // Set to INVALID_SOCKET
     c->fn = fn;
     c->is_client = true;
     c->fn_data = fn_data;
@@ -5040,16 +5070,16 @@ size_t mg_tls_pending(struct mg_connection *c) {
 
 void mg_tls_free(struct mg_connection *c) {
   struct mg_tls *tls = (struct mg_tls *) c->tls;
-  if (tls != NULL) {
-    free(tls->cafile);
-    mbedtls_ssl_free(&tls->ssl);
-    mbedtls_pk_free(&tls->pk);
-    mbedtls_x509_crt_free(&tls->ca);
-    mbedtls_x509_crt_free(&tls->cert);
-    mbedtls_ssl_config_free(&tls->conf);
-    free(tls);
-    c->tls = NULL;
-  }
+  if (tls == NULL) return;
+  free(tls->cafile);
+  mbedtls_ssl_free(&tls->ssl);
+  mbedtls_pk_free(&tls->pk);
+  mbedtls_x509_crt_free(&tls->ca);
+  mbedtls_x509_crt_free(&tls->cert);
+  mbedtls_ssl_config_free(&tls->conf);
+  free(tls);
+  c->tls = NULL;
+  c->is_tls = c->is_tls_hs = 0;
 }
 
 static int mg_net_send(void *ctx, const unsigned char *buf, size_t len) {
@@ -5325,11 +5355,13 @@ void mg_tls_init(struct mg_connection *c, const struct mg_tls_opts *opts) {
     }
   }
   if (opts->ciphers != NULL) SSL_set_cipher_list(tls->ssl, opts->ciphers);
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
   if (opts->srvname.len > 0) {
     char *s = mg_mprintf("%.*s", (int) opts->srvname.len, opts->srvname.ptr);
     SSL_set1_host(tls->ssl, s);
     free(s);
   }
+#endif
   c->tls = tls;
   c->is_tls = 1;
   c->is_tls_hs = 1;
@@ -5365,6 +5397,7 @@ void mg_tls_free(struct mg_connection *c) {
   SSL_CTX_free(tls->ctx);
   free(tls);
   c->tls = NULL;
+  c->is_tls = c->is_tls_hs = 0;
 }
 
 size_t mg_tls_pending(struct mg_connection *c) {
@@ -5585,6 +5618,8 @@ uint64_t mg_millis(void) {
   return xTaskGetTickCount() * portTICK_PERIOD_MS;
 #elif MG_ARCH == MG_ARCH_AZURERTOS
   return tx_time_get() * (1000 /* MS per SEC */ / TX_TIMER_TICKS_PER_SECOND);
+#elif MG_ARCH == MG_ARCH_TIRTOS
+  return (uint64_t) Clock_getTicks();
 #elif MG_ARCH == MG_ARCH_ZEPHYR
   return (uint64_t) k_uptime_get();
 #elif MG_ARCH == MG_ARCH_UNIX && defined(__APPLE__)
@@ -5812,9 +5847,10 @@ static void mg_ws_cb(struct mg_connection *c, int ev, void *ev_data,
           if (final) mg_call(c, MG_EV_WS_MSG, &m);
           break;
         case WEBSOCKET_OP_CLOSE:
-          MG_DEBUG(("%lu Got WS CLOSE", c->id));
+          MG_DEBUG(("%lu WS CLOSE", c->id));
           mg_call(c, MG_EV_WS_CTL, &m);
-          mg_ws_send(c, "", 0, WEBSOCKET_OP_CLOSE);
+          // Echo the payload of the received CLOSE message back to the sender
+          mg_ws_send(c, m.data.ptr, m.data.len, WEBSOCKET_OP_CLOSE);
           c->is_draining = 1;
           break;
         default:

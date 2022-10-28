@@ -41,7 +41,10 @@ CFLAGS  += -DMG_ENABLE_OPENSSL=1 -I$(OPENSSL)/include
 LDFLAGS ?= -L$(OPENSSL)/lib -lssl -lcrypto
 endif
 
-all: mg_prefix unamalgamated test mip_test arm examples vc98 vc17 vc22 mingw mingw++ fuzz
+all:
+	$(MAKE) -C examples/http-server
+
+tall: mg_prefix unamalgamated test mip_test arm armhf ppc examples vc98 vc17 vc22 mingw mingw++ fuzz
 
 mip_test: test/mip_test.c mongoose.c mongoose.h Makefile
 	$(CC) test/mip_test.c $(INCS) $(WARN) $(OPTS) $(C_WARN) $(ASAN) -o $@
@@ -103,6 +106,21 @@ valgrind: Makefile mongoose.h mongoose.c
 arm: DEFS += -DMG_ENABLE_FILE=0 -DMG_ENABLE_MIP=1 -DMG_ARCH=MG_ARCH_NEWLIB 
 arm: mongoose.h $(SRCS)
 	$(DOCKER) mdashnet/armgcc arm-none-eabi-gcc -mcpu=cortex-m3 -mthumb $(SRCS) $(OPTS) $(WARN) $(INCS) $(DEFS) $(TFLAGS) -o unit_test -nostartfiles --specs nosys.specs -e 0
+
+ppc: ASAN=
+ppc: CC = $(DOCKER) mdashnet/ppc cc
+ppc: RUN = $(DOCKER) mdashnet/ppc
+ppc: test
+
+armhf: ASAN=
+armhf: CC = $(DOCKER) mdashnet/armhf cc
+armhf: RUN = $(DOCKER) mdashnet/armhf
+armhf: test
+
+s390: ASAN=
+s390: CC = $(DOCKER) mdashnet/s390 cc
+s390: RUN = $(DOCKER) mdashnet/s390
+s390: test
 
 riscv: DEFS += -DMG_ENABLE_FILE=0 -DMG_ENABLE_MIP=1 -DMG_ARCH=MG_ARCH_NEWLIB 
 riscv: mongoose.h $(SRCS)

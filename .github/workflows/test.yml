@@ -1,5 +1,7 @@
 name: build
 on: [push, pull_request]
+env:
+  IPV6: 0
 jobs:
   linux:
     runs-on: ubuntu-latest
@@ -11,51 +13,19 @@ jobs:
         ssl: [MBEDTLS, OPENSSL]
     name: linux ${{ matrix.target }} CC=${{ matrix.cc }} SSL=${{ matrix.ssl }}
     env:
-      IPV6: 0
       CC: ${{ matrix.cc }}
       SSL: ${{ matrix.ssl }}
     steps:
     - uses: actions/checkout@v3
     - run: sudo apt-get update ; sudo apt-get install libmbedtls-dev
     - run: make ${{ matrix.target }}
-  linux_qemu:
-    runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        targets:
-          - target: arm
-            endian: little
-            toolchain: arm-linux-gnueabihf
-            qemu: qemu-arm
-          - target: ppc
-            endian: big
-            toolchain: powerpc-linux-gnu
-            qemu: qemu-ppc
-          - target: ppc64
-            endian: big
-            toolchain: powerpc64-linux-gnu
-            qemu: qemu-ppc64
-    name: linux-${{ matrix.targets.endian }}endian ${{ matrix.targets.target }}
-    env:
-      IPV6: 0
-      CC: ${{ matrix.targets.toolchain }}-gcc
-      ASAN:
-      ASAN_OPTIONS:
-      RUN: ${{ matrix.targets.qemu }} -L /usr/${{ matrix.targets.toolchain }}
-    steps:
-    - uses: actions/checkout@v3
-    - run: sudo apt-get update
-    - run: sudo apt-get dist-upgrade
-    - run: sudo apt-get install --install-suggests qemu-user gcc-${{ matrix.targets.toolchain }}
-    - run: make test
-  linux2:
+  linux-valgrind-unamalgam-prefix:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
     - run: sudo apt-get update ; sudo apt-get install libmbedtls-dev valgrind
     - run: make unamalgamated
-    - run: make valgrind IPV6=0
+    - run: make valgrind
     - run: make mg_prefix
   examples:
     runs-on: ubuntu-latest
@@ -63,14 +33,14 @@ jobs:
     - uses: actions/checkout@v3
     - run: sudo apt-get install libmbedtls-dev libpcap-dev
     - run: make clean examples
-    - run: make clean test IPV6=0 MG_ENABLE_POLL=1
+    - run: make clean test MG_ENABLE_POLL=1
   macos:
     runs-on: macos-latest
     steps:
     - uses: actions/checkout@v3
     - run: HOMEBREW_NO_AUTO_UPDATE=1 brew install jq mbedtls openssl
-    - run: make test upload-coverage SSL=OPENSSL IPV6=0 ASAN_OPTIONS= OPENSSL=`echo /usr/local/Cellar/openssl*/*`
-    - run: make test SSL=MBEDTLS IPV6=0 ASAN_OPTIONS= MBEDTLS=`echo /usr/local/Cellar/mbedtls*/*`
+    - run: make test upload-coverage SSL=OPENSSL ASAN_OPTIONS= OPENSSL=`echo /usr/local/Cellar/openssl*/*`
+    - run: make test SSL=MBEDTLS ASAN_OPTIONS= MBEDTLS=`echo /usr/local/Cellar/mbedtls*/*`
     - run: make mip_test ASAN_OPTIONS=
     - run: make mg_prefix
   windows:
@@ -87,67 +57,69 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - run: make arm
+  armhf:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - run: make armhf
+  ppc:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - run: make ppc
+  s390:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - run: make s390
   riscv:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
     - run: make riscv
-  matrix_examples:
+  embedded-examples:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        example:
-          - path: esp32/device-dashboard
-          - path: esp32/uart-bridge
-          - path: esp8266
-          - path: stm32/stm32-freertos-tcp
-          - path: stm32/stm32-nucleo-f746z
-          - path: stm32/stm32-nucleo-f746zg
-          - path: stm32/stm32-nucleo-f429z
-          - path: stm32/stm32-nucleo-h743z
-          - path: stm32/nucleo-f429zi-baremetal
-          - path: stm32/nucleo-f746zg-baremetal
-          - path: nxp/nxp-mimxrt1020-azurertos
-          - path: nxp/nxp-frdmk66f-freertos
-          - path: nxp/nxp-lpcxpresso54s018m-freertos
-          - path: nxp/nxp-mimxrt1020-freertos
-          - path: nxp/nxp-evkbimxrt1050-lwip-freertos
-          - path: nxp/nxp-evkmimxrt1020-lwip-freertos
-          - path: nxp/nxp-evkmimxrt1024-lwip-freertos
-          - path: nxp/nxp-evkmimxrt1060-lwip-freertos
-          - path: nxp/nxp-evkmimxrt1064-lwip-freertos
-          - path: nxp/nxp-evkmimxrt1160-cm7-lwip-freertos
-          - path: nxp/nxp-evkmimxrt1170-cm7-lwip-freertos
-          - path: nxp/nxp-frdmk64f-lwip-freertos
-          - path: nxp/nxp-frdmk66f-lwip-freertos
-          - path: nxp/nxp-lpcxpresso54018-lwip-freertos
-          - path: nxp/nxp-lpcxpresso54608-lwip-freertos
-          - path: nxp/nxp-lpcxpresso54618-lwip-freertos
-          - path: nxp/nxp-lpcxpresso54628-lwip-freertos
-          - path: nxp/nxp-twrk65f180m-lwip-freertos
-          - path: nxp/nxp-twrkv58f220m-lwip-freertos
-          - path: infineon/infineon-xmc4700_4800-lwip-rtx-rtos
-          - path: ti/ti-ek-tm4c1294xl-http-server
-          - path: raspberry/raspberry-pi-pico-w
-    name: ${{ matrix.example.path }}
     steps:
       - uses: actions/checkout@v3
-      - name: ${{ matrix.example.name }}
-        run: make -C examples/${{ matrix.example.path }} build
-  matrix_zephyr_examples:
+      - run: make -C examples/esp32/device-dashboard build
+      - run: make -C examples/esp32/uart-bridge build
+      - run: make -C examples/esp8266 build
+      - run: make -C examples/stm32/stm32-freertos-tcp build
+      - run: make -C examples/stm32/stm32-nucleo-f746z build
+      - run: make -C examples/stm32/stm32-nucleo-f746zg build
+      - run: make -C examples/stm32/stm32-nucleo-f429z build
+      - run: make -C examples/stm32/stm32-nucleo-h743z build
+      - run: make -C examples/stm32/nucleo-f429zi-baremetal build
+      - run: make -C examples/stm32/nucleo-f746zg-baremetal build
+      - run: make -C examples/nxp/nxp-mimxrt1020-azurertos build
+      - run: make -C examples/nxp/nxp-frdmk66f-freertos build
+      - run: make -C examples/nxp/nxp-lpcxpresso54s018m-freertos build
+      - run: make -C examples/nxp/nxp-mimxrt1020-freertos build
+      - run: make -C examples/nxp/nxp-evkbimxrt1050-lwip-freertos build
+      - run: make -C examples/nxp/nxp-evkmimxrt1020-lwip-freertos build
+      - run: make -C examples/nxp/nxp-evkmimxrt1024-lwip-freertos build
+      - run: make -C examples/nxp/nxp-evkmimxrt1060-lwip-freertos build
+      - run: make -C examples/nxp/nxp-evkmimxrt1064-lwip-freertos build
+      - run: make -C examples/nxp/nxp-evkmimxrt1160-cm7-lwip-freertos build
+      - run: make -C examples/nxp/nxp-evkmimxrt1170-cm7-lwip-freertos build
+      - run: make -C examples/nxp/nxp-frdmk64f-lwip-freertos build
+      - run: make -C examples/nxp/nxp-frdmk66f-lwip-freertos build
+      - run: make -C examples/nxp/nxp-lpcxpresso54018-lwip-freertos build
+      - run: make -C examples/nxp/nxp-lpcxpresso54608-lwip-freertos build
+      - run: make -C examples/nxp/nxp-lpcxpresso54618-lwip-freertos build
+      - run: make -C examples/nxp/nxp-lpcxpresso54628-lwip-freertos build
+      - run: make -C examples/nxp/nxp-twrk65f180m-lwip-freertos build
+      - run: make -C examples/nxp/nxp-twrkv58f220m-lwip-freertos build
+      - run: make -C examples/infineon/infineon-xmc4700_4800-lwip-rtx-rtos build
+      - run: make -C examples/ti/ti-ek-tm4c1294xl-http-server build
+      - run: make -C examples/raspberry/raspberry-pi-pico-w build
+  zephyr-examples:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        zephyrexample:
-          - path: zephyr/device-dashboard
-          - path: zephyr/http-client
-          - path: zephyr/http-server
-          - path: zephyr/mqtt-aws-client
-          - path: zephyr/websocket-server
-    name: ${{ matrix.zephyrexample.name }}
     steps:
       - uses: actions/checkout@v3
-      - name: ${{ matrix.zephyrexample.name }}
-        run: make -C examples/${{ matrix.zephyrexample.path }} zephyr build
+      - run: make -C examples/zephyr/http-client zephyr
+      - run: make -C examples/zephyr/http-client build
+      - run: make -C examples/zephyr/http-server build
+      - run: make -C examples/zephyr/device-dashboard build
+      - run: make -C examples/zephyr/mqtt-aws-client build
+      - run: make -C examples/zephyr/websocket-server build
